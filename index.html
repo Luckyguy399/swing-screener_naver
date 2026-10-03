@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>단타·스윙 스크리너</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>
+:root{--bg:#eef1f5;--card:#fff;--ink:#1b2433;--sub:#6b7686;--line:#dde2ea;--up:#d7263d;--dn:#2b6cd9;--acc:#0f766e;--accbg:#d9f0ed;--warn:#b45309;--warnbg:#fdecc8;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141a24;--card:#1d2532;--ink:#e8edf5;--sub:#93a0b3;--line:#2c3646;--up:#ff6b7d;--dn:#6ea2ff;--acc:#4fd1c5;--accbg:#173a38;--warn:#f6c453;--warnbg:#3b2f12}}
+:root[data-theme="dark"]{--bg:#141a24;--card:#1d2532;--ink:#e8edf5;--sub:#93a0b3;--line:#2c3646;--up:#ff6b7d;--dn:#6ea2ff;--acc:#4fd1c5;--accbg:#173a38;--warn:#f6c453;--warnbg:#3b2f12}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:'IBM Plex Sans KR',-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;-webkit-text-size-adjust:100%}
+.wrap{max-width:640px;margin:0 auto;padding:16px 14px 40px}
+h1{font-size:20px;margin:4px 0 2px;font-weight:700}
+.note{font-size:12px;color:var(--warn);background:var(--warnbg);padding:6px 10px;border-radius:6px;margin:8px 0 12px}
+.bar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.chip{border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-size:13px;padding:7px 12px;border-radius:999px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--acc);border-color:var(--acc);color:#fff}
+.chip:focus-visible,.row:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.list{border-top:1px solid var(--line)}
+.row{background:var(--card);border-bottom:1px solid var(--line);padding:12px 12px 10px;cursor:pointer;display:block;width:100%;text-align:left;border-left:0;border-right:0;border-top:0;font:inherit;color:inherit}
+.r1{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.nm{font-weight:700;font-size:16px}.cd{color:var(--sub);font-size:12px;margin-left:6px}
+.chg{font-weight:700;font-variant-numeric:tabular-nums}.up{color:var(--up)}.dn{color:var(--dn)}
+.r2{display:flex;justify-content:space-between;gap:8px;margin-top:4px;font-size:12px;color:var(--sub)}
+.theme{color:var(--acc);font-weight:500}
+.sc{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:9px}
+.g{font-size:11px;color:var(--sub)}
+.g b{color:var(--ink);font-size:13px;margin-left:4px}
+.track{height:6px;background:var(--line);border-radius:3px;margin-top:3px;overflow:hidden}
+.fill{height:100%;background:var(--acc);border-radius:3px}
+.fill.s{background:var(--dn)}
+.tag{display:inline-block;margin-top:8px;font-size:12px;font-weight:700;padding:3px 9px;border-radius:5px;background:var(--accbg);color:var(--acc)}
+.tag.w{background:var(--line);color:var(--sub)}
+.det{display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);font-size:12.5px;line-height:1.7}
+.row.open .det{display:block}
+.det span{display:inline-block;margin:0 6px 4px 0;padding:2px 8px;border-radius:5px;border:1px solid var(--line)}
+.det .on{border-color:var(--acc);color:var(--acc)}
+.det .off{color:var(--sub)}
+.empty{padding:28px;text-align:center;color:var(--sub);font-size:14px}
+.foot{font-size:11.5px;color:var(--sub);margin-top:14px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>단타·스윙 스크리너</h1>
+<div id="clock" style="font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums"></div>
+<div class="note" id="st">시세 불러오는 중…</div>
+<div class="bar" id="f">
+<button class="chip" data-f="all" aria-pressed="true">전체</button>
+<button class="chip" data-f="day" aria-pressed="false">단타 적합</button>
+<button class="chip" data-f="swing" aria-pressed="false">스윙 적합</button>
+</div>
+<div class="bar" id="s">
+<button class="chip" data-s="best" aria-pressed="true">종합점수순</button>
+<button class="chip" data-s="amt" aria-pressed="false">거래대금순</button>
+<button class="chip" data-s="vr" aria-pressed="false">거래량증가순</button>
+<button class="chip" data-s="cap" aria-pressed="false">시총순</button>
+</div>
+<div class="list" id="list"></div>
+<div class="foot">점수 기준(100점) — 단타: 거래대금 30, 거래량 증가 30, 변동성(ATR) 20, 매물대 돌파 20. 스윙: 추세 35, 눌림·RSI 25, 테마강도 15, 돌파 15, 볼린저 위치 10. 70점 이상이면 적합으로 표시합니다.</div>
+</div>
+<script>
+let D=[];
+const fmtCap=v=>!v?'-':v>=10000?(v/10000).toFixed(1).replace(/\.0$/,'')+'조':v.toLocaleString()+'억';
+const fmtAmt=v=>v>=10000?(v/10000).toFixed(1)+'조':v.toLocaleString()+'억';
+function score(d){
+ const day=(d.amt>=500?30:d.amt>=200?20:d.amt>=100?10:0)+(d.vr>=300?30:d.vr>=200?22:d.vr>=150?12:0)+(d.atr>=5?20:d.atr>=3?12:d.atr>=2?5:0)+(d.brk?20:0);
+ const rsiOk=(d.rsi>=40&&d.rsi<=65)||d.rsi<=30;
+ const sw=(d.trend===2?35:d.trend===1?18:0)+((d.pull&&rsiOk)?25:(rsiOk?12:0))+Math.round(d.ts*1.5)+(d.brk?15:0)+(d.pb>=.5&&d.pb<=1?10:d.pb<.1?6:0);
+ return {day:Math.min(day,100),sw:Math.min(sw,100)};
+}
+let F='all',S='best';
+function verdict(d){const a=d.sc.day>=70,b=d.sc.sw>=70;return a&&b?'단타 + 스윙 적합':a?'단타 적합':b?'스윙 적합':'관망'}
+function rsiLabel(r){return r>=70?'과매수':r<=30?'과매도':'중립'}
+function pbLabel(p){return p>=1?'상단 돌파':p<=0.05?'하단 터치':p>=.8?'상단 근접':'밴드 내'}
+function render(){
+ let L=D.filter(d=>F==='all'||(F==='day'&&d.sc.day>=70)||(F==='swing'&&d.sc.sw>=70));
+ L.sort((a,b)=>S==='best'?b.best-a.best:S==='amt'?b.amt-a.amt:S==='vr'?b.vr-a.vr:b.cap-a.cap);
+ const el=document.getElementById('list');
+ if(!L.length){el.innerHTML='<div class="empty">조건에 맞는 종목이 없어요. 다른 필터를 선택해 보세요.</div>';return}
+ el.innerHTML=L.map(d=>{
+  const up=d.chg>=0,v=verdict(d);
+  const on=(x,t)=>`<span class="${x?'on':'off'}">${t}</span>`;
+  return `<button class="row" type="button" aria-expanded="false">
+  <div class="r1"><div><span class="nm">${d.n}</span><span class="cd">${d.c}</span></div>
+  <div class="chg ${up?'up':'dn'}">${d.p.toLocaleString()}원 ${up?'+':''}${d.chg.toFixed(1)}%</div></div>
+  <div class="r2"><div><span class="theme">${d.t}</span> · ${d.s}</div><div>시총 ${fmtCap(d.cap)}</div></div>
+  <div class="sc">
+   <div class="g">단타<b>${d.sc.day}</b><div class="track"><div class="fill" style="width:${d.sc.day}%"></div></div></div>
+   <div class="g">스윙<b>${d.sc.sw}</b><div class="track"><div class="fill s" style="width:${d.sc.sw}%"></div></div></div>
+  </div>
+  <span class="tag ${v==='관망'?'w':''}">${v}</span>
+  <div class="det">
+   ${on(d.amt>=200,'거래대금 '+fmtAmt(d.amt))}${on(d.vr>=200,'거래량 평균 대비 '+d.vr+'%')}${on(d.brk,d.brk?'매물대 돌파':'돌파 없음')}
+   ${on(d.trend===2,d.trend===2?'이평 정배열':d.trend===1?'20일선 위':'20일선 아래')}${on(d.rsi>=70||d.rsi<=30,'RSI '+d.rsi+' ('+rsiLabel(d.rsi)+')')}
+   ${on(d.pb>=.8||d.pb<=.05,'볼린저 '+pbLabel(d.pb))}${on(d.atr>=4,'일 변동폭 약 '+d.atr+'%')}${on(d.pull,d.pull?'눌림목 구간':'눌림 아님')}${on(d.ts>=8,'테마 강도 '+d.ts+'/10')}
+  </div></button>`}).join('');
+}
+function bind(id,key,set){document.getElementById(id).addEventListener('click',e=>{const b=e.target.closest('.chip');if(!b)return;set(b.dataset[key]);document.querySelectorAll('#'+id+' .chip').forEach(x=>x.setAttribute('aria-pressed',x===b));render()})}
+bind('f','f',v=>F=v);bind('s','s',v=>S=v);
+document.getElementById('list').addEventListener('click',e=>{const r=e.target.closest('.row');if(!r)return;const o=r.classList.toggle('open');r.setAttribute('aria-expanded',o)});
+const st=document.getElementById('st');
+async function load(){
+ try{
+  const r=await fetch('/api/stocks');const j=await r.json();if(!r.ok)throw new Error(j.error);
+  D=j.items.filter(d=>!d.err);D.forEach(d=>{d.sc=score(d);d.best=Math.max(d.sc.day,d.sc.sw)});
+  const bad=j.items.length-D.length;
+  st.className='';st.style.cssText='font-size:12px;color:var(--sub);margin:4px 0 12px';
+  st.textContent='시세 갱신 '+new Date(j.asOf).toLocaleTimeString('ko-KR',{timeZone:'Asia/Seoul',hour12:false})+' · 30초마다 자동 갱신'+(bad?' · 조회 실패 '+bad+'종목':'');
+  render();
+ }catch(e){st.textContent='데이터를 불러오지 못했어요: '+e.message}
+}
+load();setInterval(load,30000);
+function tick(){
+ const now=new Date();
+ const k=new Date(now.toLocaleString('en-US',{timeZone:'Asia/Seoul'}));
+ const day=k.getDay(),m=k.getHours()*60+k.getMinutes();
+ const open=day>0&&day<6&&m>=540&&m<=930;
+ const txt=now.toLocaleString('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'long',day:'numeric',weekday:'short',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+ document.getElementById('clock').textContent=txt+' (KST) · '+(open?'정규장 진행 중':'정규장 마감');
+}
+tick();setInterval(tick,1000);
+</script>
+</body>
+</html>
