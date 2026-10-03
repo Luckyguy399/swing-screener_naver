@@ -1,20 +1,8 @@
-// 단타·스윙 스크리너 서버 — 네이버 금융 데이터 버전 (Node 18+, 외부 패키지·API 키 불필요)
-// 비공식 데이터 경로라 네이버가 구조를 바꾸면 멈출 수 있어요. 개인용으로 요청 간격을 넉넉히 둡니다.
+// 단타·스윙 스크리너 서버 — 네이버 금융 데이터 + 종목 검색 (Node 18+, 외부 패키지·API 키 불필요)
+// 비공식 데이터 경로라 네이버가 구조를 바꾸면 멈출 수 있어요.
 const http = require('http'), fs = require('fs'), path = require('path');
 const PORT = process.env.PORT || 3000;
 const UA = { 'user-agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36', referer: 'https://finance.naver.com/' };
-
-// 관심 종목 + 테마 (여기에 추가/수정하세요)
-const WATCH = [
-  { c: '095610', n: '테스', t: '반도체 소부장', s: '전공정 · 증착장비' },
-  { c: '067310', n: '하나마이크론', t: '반도체 소부장', s: '후공정 · 패키징(OSAT)' },
-  { c: '042700', n: '한미반도체', t: '반도체 소부장', s: '후공정 · HBM TC본더' },
-  { c: '058470', n: '리노공업', t: '반도체 소부장', s: '테스트 · 소켓/핀' },
-  { c: '058610', n: '에스피지', t: '로봇', s: '액츄에이터 · 감속기' },
-  { c: '277810', n: '레인보우로보틱스', t: '로봇', s: '휴머노이드 · 완제품' },
-  { c: '086520', n: '에코프로', t: '2차전지', s: '양극재 · 소재' },
-  { c: '010140', n: '삼성중공업', t: '조선', s: '조선 · LNG선' },
-];
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
@@ -25,9 +13,9 @@ async function get(url, enc) {
   return new TextDecoder(enc || 'utf-8').decode(await r.arrayBuffer());
 }
 
-// 실시간 시세 (전 종목 한 번에)
-async function quotes() {
-  const t = await get('https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:' + WATCH.map(w => w.c).join(','), 'euc-kr');
+// 실시간 시세 (요청한 종목 한 번에)
+async function quotes(codes) {
+  const t = await get('https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:' + codes.join(','), 'euc-kr');
   const j = JSON.parse(t), m = {};
   for (const a of (j.result && j.result.areas) || []) for (const d of a.datas || []) m[d.cd] = d;
   if (!Object.keys(m).length) throw new Error('네이버 시세 응답이 비어 있어요 (차단되었거나 구조가 바뀌었을 수 있어요)');
@@ -96,47 +84,104 @@ function calc(bars) {
   };
 }
 
-let cache = { t: 0, d: null }, inflight = null;
-function load() {
-  if (cache.d && Date.now() - cache.t < 20000) return Promise.resolve(cache.d);
-  if (inflight) return inflight;
-  inflight = (async () => {
-    const q = await quotes();
+// 종목 검색 (자동완성 응답 모양이 달라도 읽도록 느슨하게 파싱)
+const isCode = s => /^[0-9A-Z]{6}$/.test(s) && /\d/.test(s);
+const SKIP = /^(KOSPI|KOSDAQ|KONEX|ETF|ETN|stock|KRX)$/i;
+const rowOf = n => n.length && n.every(e => typeof e === 'string') ? n
+  : (n.length && n.every(e => Array.isArray(e) && e.every(s => typeof s === 'string')) ? n.flat() : null);
+function walk(n, out) {
+  if (Array.isArray(n)) {
+    const f = rowOf(n);
+    if (f) {
+      const c = f.find(isCode);
+      const nm = f.find(s => s !== c && !SKIP.test(s) && !isCode(s) && /[가-힣A-Za-z]/.test(s));
+      const mk = f.find(s => /^(KOSPI|KOSDAQ|ETF|ETN)$/i.test(s));
+      if (c && nm) out.push({ c, n: nm, m: mk || '' });
+      return;
+    }
+    n.forEach(e => walk(e, out));
+  } else if (n && typeof n === 'object') {
+    const c = n.code || n.cd || n.itemCode, nm = n.name || n.nm || n.stockName;
+    if (typeof c === 'string' && isCode(c) && typeof nm === 'string' && (!n.nationCode || n.nationCode === 'KOR')) {
+      out.push({ c, n: nm, m: n.typeCode || n.market || '' }); return;
+    }
+    Object.values(n).forEach(e => walk(e, out));
+  }
+}
+async function search(q) {
+  q = q.trim().slice(0, 30);
+  if (!q) return [];
+  const e = encodeURIComponent(q);
+  const urls = ['https://ac.stock.naver.com/ac?q=' + e + '&target=stock',
+    'https://m.stock.naver.com/front-api/search/autoComplete?query=' + e + '&target=stock'];
+  let out = [];
+  for (const u of urls) { try { walk(JSON.parse(await get(u)), out); } catch (x) { /* 다음 경로 시도 */ } if (out.length) break; }
+  const seen = new Set();
+  out = out.filter(x => !seen.has(x.c) && seen.add(x.c)).slice(0, 10);
+  const up = q.toUpperCase();
+  if (!out.length && isCode(up)) {
+    try { const j = JSON.parse(await get('https://m.stock.naver.com/api/stock/' + up + '/basic')); if (j.stockName) out = [{ c: up, n: j.stockName, m: '' }]; } catch (x) { /* 없음 */ }
+  }
+  return out;
+}
+
+// 시세·지표 계산 (화면이 보낸 종목 목록 기준)
+const lc = new Map();
+function load(list) {
+  const key = list.map(x => x.c).sort().join(',');
+  const h = lc.get(key);
+  if (h && Date.now() - h.t < 20000) return h.p;
+  const p = (async () => {
+    const q = await quotes(list.map(x => x.c));
     const items = [];
-    for (const w of WATCH) {
+    for (const w of list) {
       try {
         const o = q[w.c];
         if (!o) throw new Error('시세 없음');
-        const p = +o.nv, sv = +o.sv;
-        const chg = sv ? (p / sv - 1) * 100 : 0;
+        const px = +o.nv, sv = +o.sv;
+        const chg = sv ? (px / sv - 1) * 100 : 0;
         const bars = (await chart(w.c)).map(x => ({ ...x }));
-        if (bars.length) { bars[bars.length - 1].c = p; if (+o.aq) bars[bars.length - 1].v = +o.aq; }
+        if (bars.length) { bars[bars.length - 1].c = px; if (+o.aq) bars[bars.length - 1].v = +o.aq; }
         const ind = calc(bars);
         if (!ind) throw new Error('일봉 데이터 부족');
-        const est = +o.aq * p / 1e8;                       // 거래대금 추정(억)
-        const aa = +o.aa / 100;                            // 네이버 값(백만원 → 억), 단위 검증 후 사용
+        const est = +o.aq * px / 1e8;
+        const aa = +o.aa / 100;
         const amt = Math.round(aa && est && aa > est * 0.3 && aa < est * 3 ? aa : est);
-        items.push({ ...w, p, chg: +chg.toFixed(2), cap: await cap(w.c), amt, ...ind });
+        items.push({ ...w, p: px, chg: +chg.toFixed(2), cap: await cap(w.c), amt, ...ind });
       } catch (e) { items.push({ ...w, err: e.message }); }
-      await sleep(120);
+      await sleep(100);
     }
     const grp = {};
-    items.filter(i => !i.err).forEach(i => (grp[i.t] = grp[i.t] || []).push(i.chg));
-    items.forEach(i => { if (!i.err) i.ts = Math.max(0, Math.min(10, Math.round(5 + avg(grp[i.t]) * 1.2))); });
-    cache = { t: Date.now(), d: { asOf: new Date().toISOString(), items } };
-    return cache.d;
-  })().finally(() => { inflight = null; });
-  return inflight;
+    items.filter(i => !i.err && i.t && i.t !== '미분류').forEach(i => (grp[i.t] = grp[i.t] || []).push(i.chg));
+    items.forEach(i => { if (!i.err) i.ts = grp[i.t] ? Math.max(0, Math.min(10, Math.round(5 + avg(grp[i.t]) * 1.2))) : 5; });
+    return { asOf: new Date().toISOString(), items };
+  })();
+  lc.set(key, { t: Date.now(), p });
+  if (lc.size > 30) lc.delete(lc.keys().next().value);
+  p.catch(() => lc.delete(key));
+  return p;
 }
 
+const body = req => new Promise((ok, no) => {
+  let b = '';
+  req.on('data', c => { b += c; if (b.length > 1e5) { no(new Error('요청이 너무 커요')); req.destroy(); } });
+  req.on('end', () => ok(b)); req.on('error', no);
+});
+
 http.createServer(async (req, res) => {
-  if (req.url.startsWith('/api/stocks')) {
-    const h = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
+  const u = new URL(req.url, 'http://x');
+  const h = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
+  const send = (c, o) => { res.writeHead(c, h); res.end(JSON.stringify(o)); };
+  if (u.pathname === '/api/stocks' || u.pathname === '/api/search') {
     try {
-      const d = await load();
-      res.writeHead(200, h); res.end(JSON.stringify(d));
-    } catch (e) { res.writeHead(500, h); res.end(JSON.stringify({ error: e.message })); }
-    return;
+      if (u.pathname === '/api/search') return send(200, { items: await search(u.searchParams.get('q') || '') });
+      let list = JSON.parse(await body(req) || '[]');
+      if (!Array.isArray(list)) throw new Error('잘못된 요청이에요');
+      list = list.slice(0, 40).filter(x => x && isCode(String(x.c)))
+        .map(x => ({ c: String(x.c), t: String(x.t || '').slice(0, 30), s: String(x.s || '').slice(0, 40) }));
+      if (!list.length) return send(200, { asOf: new Date().toISOString(), items: [] });
+      return send(200, await load(list));
+    } catch (e) { return send(500, { error: e.message }); }
   }
   fs.readFile(path.join(__dirname, 'index.html'), (e, b) => {
     if (e) { res.writeHead(404); return res.end('not found'); }
